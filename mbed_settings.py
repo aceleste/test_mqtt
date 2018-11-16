@@ -29,7 +29,7 @@ from os.path import join, abspath, dirname
 
 # GCC ARM
 #GCC_ARM_PATH = ""
-GCC_ARM_PATH = "/usr/local/gcc-arm-none-eabi-7-2018-q2-update/bin/"
+GCC_ARM_PATH = "/Users/aceleste/gcc-arm-none-eabi-7-2018-q2-update/bin"
 
 # GCC CodeRed
 #GCC_CR_PATH = "C:/code_red/RedSuite_4.2.0_349/redsuite/Tools/bin"
@@ -43,7 +43,7 @@ GCC_ARM_PATH = "/usr/local/gcc-arm-none-eabi-7-2018-q2-update/bin/"
 #BUILD_OPTIONS = []
 
 # mbed.org username
-#MBED_ORG_USER = ""
+#MBED_ORG_USER = "alainceleste"
 
 # Print compiler warnings and errors as link format
 #PRINT_COMPILER_OUTPUT_AS_LINK = False

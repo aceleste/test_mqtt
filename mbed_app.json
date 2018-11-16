@@ -1,7 +1,8 @@
 {
     "macros": [
-        "DEFAULT_APN=\"m2m-east.telus.iot\"",
-        "NDEBUG=1",
+        "DEFAULT_APN=\"m2m.tele2.com \"",
+        "NET_USER=\"Ianthomson\"",
+        "NET_PASSWORD=\"Waleed29\"",
         "BG96_LIBRARY_READ_TIMEOUTMS=30000"
     ],
     "config": {
@@ -19,11 +20,11 @@
         },
         "teluskit": {
             "help" : "if this kit is a Telus IoT Kit, set this to 1, otherwise to 0",
-            "value": 1
+            "value": 0
         },
         "iksversion": {
             "help" : "define the sensor board used either IKS01A2 (value=2) or IKS01A1 (value=1)",
-            "value": 2
+            "value": 0
         },
         "mbedtls_custom_config": {
             "macro_name": "MBEDTLS_USER_CONFIG_FILE",
@@ -31,11 +32,11 @@
         },
         "bg96_debug": {
             "help" : "enable or disable WNC debug messages.",
-            "value": 0
+            "value": 1
         },
         "bg96_debug_setting": {
             "help" : "bit value 1 and/or 2 enable WncController debug output, bit value 4 enables mbed driver debug output.",
-            "value": "0x0c"
+            "value": "0xAC"
         }
     },
     "target_overrides": {
@@ -47,7 +48,7 @@
          "K64F": {
             "button_active_state": "ActiveLow"
          },
-         "NUCLEO_L496ZG": {
+         "DISCO_L496AG": {
          }
     }
 }

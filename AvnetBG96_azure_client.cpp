@@ -9,39 +9,56 @@
 #include "azure_c_shared_utility/platform.h"
 #include "azure_c_shared_utility/agenttime.h"
 #include "jsondecoder.h"
-#include "button.hpp"
 
 #define APP_VERSION "1.0"
 #define IOT_AGENT_OK CODEFIRST_OK
 
 #include "azure_certs.h"
 
+typedef struct Position_t {
+    float latitude;
+    float longitude;
+    int    geofence;
+} Position;
+
+typedef struct Temperature_t {
+    float containerTemperature;
+    float heaterTemperature;
+} Temperature;
+
+typedef struct Health_t {
+    float  batteryVoltage;
+    char* network;
+    int    signalStrength;
+} Health;
+
 /* The following is the message we will be sending to Azure */
-typedef struct IoTDevice_t {
-    char* ObjectName;
-    char* ObjectType;
-    char* Version;
-    char* ReportingDevice;
-    float Temperature;
-    int   Humidity;
-    int   Pressure;
-    int   Tilt;
-    int   ButtonPress;
-    char* TOD;
-    } IoTDevice;
+typedef struct IoTDeviceToSystem_t {
+    char* timestamp;
+    char* device;
+    Position* position;
+    Temperature* temperature;
+    Health* health;
+    } IoTDeviceToSystem;
 
 #define IOTDEVICE_MSG_FORMAT       \
    "{"                             \
-     "\"ObjectName\":\"%s\","      \
-     "\"ObjectType\":\"%s\","      \
-     "\"Version\":\"%s\","         \
-     "\"ReportingDevice\":\"%s\"," \
-     "\"Temperature\":%.02f,"      \
-     "\"Humidity\":%d,"            \
-     "\"Pressure\":%d,"            \
-     "\"Tilt\":%d,"                \
-     "\"ButtonPress\":%d,"         \
-     "\"TOD\":\"%s UTC\""          \
+     "\"timestamp\":\"%s\","       \
+     "\"device\":\"%s\","          \
+     "\"position\": {"             \
+     "\"latitude\":%.4f,"          \
+     "\"longitude\":%.4f,"         \
+     "\"geoFence\":%d"             \
+     "},"                          \
+     "\"temperature\": {"          \
+     "\"container\":%.1f,"         \
+     "\"heater\":%.1f"             \
+     "},"                          \
+     "\"health\": {"               \
+     "\"batteryVoltage\":%.2f,"    \
+     "\"network\":\"%s\","         \
+     "\"signalStrength\":%d"     \
+     "}"                           \
    "}"                             
 
 /* initialize the expansion board && sensors */
@@ -63,107 +80,14 @@ typedef struct IoTDevice_t {
   #define ENV_SENSOR "NO"
 #endif
 
-static const char* connectionString = "HostName=XXXX;DeviceId=xxxx;SharedAccessKey=xxxx";
+static const char* connectionString = "HostName=BTL-IOT-Hub.azure-devices.net;DeviceId=Test-Device-1;SharedAccessKey=BTL-IOT-Hub.azure-devices.net%2Fdevices%2FTest-Device-1&sig=jMZ6thMEEQcVnypMqEAMFOVfrv5pDUjvJBERxPy1rus%3D&se=1566668939";
 
-static const char* deviceId         = "xxxx"; /*must match the one on connectionString*/
+//static const char* deviceId         = "Test-Device-1"; /*must match the one on connectionString*/
 
 #define CTOF(x)         (((double)(x)*9/5)+32)
 
 Thread azure_client_thread(osPriorityNormal, 8*1024, NULL, "azure_client_thread");
 static void azure_task(void);
-
-Thread LED_thread(osPriorityNormal, 256, NULL, "LED_thread");
-static void LED_task(void);
-
-/* LED Management */
-DigitalOut   RED_led(LED1);
-DigitalOut   BLUE_led(LED2);
-DigitalOut   GREEN_led(LED3);
-
-const int    blink_interval = 500; //msec
-int          RED_state, BLUE_state, GREEN_state;
-
-#define GREEN       4  //0 0100 GREEN
-#define BLUE        2  //0 0010
-#define RED         1  //0 0001 RED
-
-#define LED_ON      8  //0 1xxx
-#define LED_BLINK  16  //1 xxxx
-#define LED_OFF     0  //0 0xxx
-
-#define SET_LED(l,s) (l##_led = ((l##_state=s)&LED_ON)? 1: 0)
-
-//
-// The LED thread simply manages the LED's on an on-going basis
-//
-static void LED_task(void)
-{
-    while (true) {
-        if( GREEN_state & LED_OFF ) 
-            GREEN_led = 0;
-        else if( GREEN_state & LED_ON ) 
-            GREEN_led = 1;
-        else if( GREEN_state & LED_BLINK ) 
-            GREEN_led = !GREEN_led;
-
-        if( BLUE_state & LED_OFF ) 
-            BLUE_led = 0;
-        else if( BLUE_state & LED_ON ) 
-            BLUE_led = 1;
-        else if( BLUE_state & LED_BLINK ) 
-            BLUE_led = !BLUE_led;
-
-        if( RED_state & LED_OFF ) 
-            RED_led = 0;
-        else if( RED_state & LED_ON ) 
-            RED_led = 1;
-        else if( RED_state & LED_BLINK ) 
-            RED_led = !RED_led;
-
-        Thread::wait(blink_interval);  //in msec
-        }
-}
-
-
-/* Button callbacks for a press and release (light an LED) */
-static bool button_pressed = false;
-void ub_press(void)
-{
-    button_pressed = true;
-    SET_LED(RED,LED_ON);
-}
-
-void ub_release(int x)
-{
-    button_pressed = false;
-    SET_LED(RED,LED_OFF);
-}
-
-
-//
-// The mems sensor is setup to generate an interrupt with a tilt 
-// is detected at which time the blue LED is set to blink, also
-// initialize all the ensors...
-//
-
-static int tilt_event;
-
-void mems_int1(void)
-{
-    tilt_event++;
-    SET_LED(BLUE,LED_BLINK);
-}
-
-void mems_init(void)
-{
-#if MBED_CONF_APP_IKSVERSION == 2
-    acc_gyro->attach_int1_irq(&mems_int1);  // Attach callback to LSM6DSL INT1
-    hum_temp->enable();                     // Enable HTS221 enviromental sensor
-    pressure->enable();                     // Enable barametric pressure sensor
-    acc_gyro->enable_x();                   // Enable LSM6DSL accelerometer
-    acc_gyro->enable_tilt_detection();      // Enable Tilt Detection
-#endif
-}
 
 //
 // The main routine simply prints a banner, initializes the system
@@ -200,12 +124,10 @@ int main(void)
   acc_gyro = mems_expansion_board->GetGyroscope();
 #endif
 
-    mems_init();
-    LED_thread.start(LED_task);
     azure_client_thread.start(azure_task);
 
     azure_client_thread.join();
-    LED_thread.terminate();
+
     platform_deinit();
     printf(" - - - - - - - ALL DONE - - - - - - - \n");
     return 0;
@@ -218,7 +140,7 @@ int main(void)
 // *************************************************************
 //  AZURE STUFF...
 //
-char* makeMessage(IoTDevice* iotDev)
+char* makeMessage(IoTDeviceToSystem* iotDev)
 {
     static char buffer[80];
     const int   msg_size = 512;
@@ -229,20 +151,21 @@ char* makeMessage(IoTDevice* iotDev)
     time(&rawtime);
     ptm = gmtime(&rawtime);
     strftime(buffer,80,"%a %F %X",ptm);
-    iotDev->TOD = buffer;
+    iotDev->timestamp = buffer;
     int c = (strstr(buffer,":")-buffer) - 2;
     printf("Send IoTHubClient Message@%s - ",&buffer[c]);
     snprintf(ptr, msg_size, IOTDEVICE_MSG_FORMAT,
-                            iotDev->ObjectName,
-                            iotDev->ObjectType,
-                            iotDev->Version,
-                            iotDev->ReportingDevice,
-                            iotDev->Temperature,
-                            iotDev->Humidity,
-                            iotDev->Pressure,
-                            iotDev->Tilt,
-                            iotDev->ButtonPress,
-                            iotDev->TOD);
+                            iotDev->timestamp,
+                            iotDev->device,
+                            iotDev->position->latitude,
+                            iotDev->position->longitude,
+                            iotDev->position->geofence,
+                            iotDev->temperature->containerTemperature,
+                            iotDev->temperature->heaterTemperature,
+                            iotDev->health->batteryVoltage,
+                            iotDev->health->network,
+                            iotDev->health->signalStrength
+                            );
     return ptr;
 }
 
@@ -283,18 +206,6 @@ IOTHUBMESSAGE_DISPOSITION_RESULT receiveMessageCallback(
     temp[size] = '\0';
 
     printf("Receiving message: '%s'\r\n", temp);
-    if( !strcmp(temp,"led-blink") ) {
-        SET_LED(GREEN,LED_BLINK);
-        printf("start blinking\n");
-        }
-    if( !strcmp(temp,"led-on") ) {
-        SET_LED(GREEN,LED_ON);
-        printf("turn on\n");
-        }
-    if( !strcmp(temp,"led-off") ) {
-        SET_LED(GREEN,LED_OFF);
-        printf("turn off\n");
-        }
 
     free(temp);
 
@@ -303,19 +214,7 @@ IOTHUBMESSAGE_DISPOSITION_RESULT receiveMessageCallback(
 
 void azure_task(void)
 {
-    bool button_press = false, runTest = true;
-    bool tilt_detection_enabled=true;
-    float gtemp, ghumid, gpress;
-
-    int  k;
     int  msg_sent=1;
-
-    Button user_button(BUTTON1,Button::MBED_CONF_APP_BUTTON_ACTIVE_STATE, ub_release);
-    user_button.setButton_press_cb(ub_press);
-
-    SET_LED(RED,LED_ON);
-    SET_LED(BLUE,LED_ON);
-    SET_LED(GREEN,LED_ON);
 
     /* Setup IoTHub client configuration */
     IOTHUB_CLIENT_LL_HANDLE iotHubClientHandle = IoTHubClient_LL_CreateFromConnectionString(connectionString, HTTP_Protocol);
@@ -341,90 +240,62 @@ void azure_task(void)
     if (IoTHubClient_LL_SetOption(iotHubClientHandle, "MinimumPollingTime", &minimumPollingTime) != IOTHUB_CLIENT_OK)
         printf("failure to set option \"MinimumPollingTime\"\r\n");
 
-    IoTDevice* iotDev = (IoTDevice*)malloc(sizeof(IoTDevice));
+
+    Position* iotPos = (Position*)malloc(sizeof(Position));
+    if (iotPos == NULL) {
+        printf("Failed to malloc space for Position\r\n");
+        return;
+    }
+
+    Temperature* iotTemp = (Temperature*)malloc(sizeof(Temperature));
+    if (iotTemp == NULL) {
+        printf("Failed to malloc space for Temperature\r\n");
+        return;
+    }
+
+    Health* iotHealth = (Health*)malloc(sizeof(Health));
+    if (iotHealth == NULL) {
+        printf("Failed to malloc space for Health\r\n");
+        return;
+    }
+
+    IoTDeviceToSystem* iotDev = (IoTDeviceToSystem*)malloc(sizeof(IoTDeviceToSystem));
     if (iotDev == NULL) {
         printf("Failed to malloc space for IoTDevice\r\n");
         return;
-        }
+    }
 
     // set C2D and device method callback
     IoTHubClient_LL_SetMessageCallback(iotHubClientHandle, receiveMessageCallback, NULL);
 
+    // setup the iotPos structure contents...
+    iotPos->latitude = 38.898556;
+    iotPos->longitude = -77.037852;
+    iotPos->geofence = 0;
+
+    // setup the iotTemp structure contents ...
+    iotTemp->containerTemperature = 35.4;
+    iotTemp->heaterTemperature = 37.1;
+
+    // setup the iotHealth structure contents ...
+    iotHealth->batteryVoltage = 3.4;
+    iotHealth->network = (char*)"Orange";
+    iotHealth->signalStrength = 7;
     //
     // setup the iotDev struction contents...
     //
-    iotDev->ObjectName      = (char*)"Avnet NUCLEO-L496ZG+BG96 Azure IoT Client";
-    iotDev->ObjectType      = (char*)"SensorData";
-    iotDev->Version         = (char*)APP_VERSION;
-    iotDev->ReportingDevice = (char*)"STL496ZG-BG96";
-    iotDev->TOD             = (char*)"";
-    iotDev->Temperature     = 0.0;
-    iotDev->Humidity        = 0;
-    iotDev->Pressure        = 0;
-    iotDev->Tilt            = 0x2;
-    iotDev->ButtonPress     = 0;
+    iotDev->timestamp      = NULL;
+    iotDev->device         = (char*)"TEST-DEVICE-1";
 
-    SET_LED(RED,LED_OFF);
-    SET_LED(BLUE,LED_OFF);
-    SET_LED(GREEN,LED_OFF);
-
-    while (runTest) {
+    while (1) {
         char*  msg;
         size_t msgSize;
-
-#if MBED_CONF_APP_IKSVERSION == 2
-        hum_temp->get_temperature(&gtemp);           // get Temp
-        hum_temp->get_humidity(&ghumid);             // get Humidity
-        pressure->get_pressure(&gpress);             // get pressure
-#elif MBED_CONF_APP_IKSVERSION == 1
-        CALL_METH(temp, get_temperature, &gtemp, 0.0f);
-        CALL_METH(hum, get_humidity, &ghumid, 0.0f);
-        CALL_METH(pressure, get_pressure, &gpress, 0.0f);
-#else
-        gtemp  = 0.0;
-        ghumid = 0.0;
-        gpress = 0.0;
-#endif
-
-        iotDev->Temperature = CTOF(gtemp);
-        iotDev->Humidity    = (int)ghumid;
-        iotDev->Pressure    = (int)gpress;
-
-        if( tilt_event ) {
-            tilt_event = 0;
-            iotDev->Tilt |= 1;
-            }
-
-        iotDev->ButtonPress = button_pressed?1:0;
-        if( user_button.chkButton_press(&k) ) {
-            if( k > 3000 ) {
-                printf("User Requested Termination (held button for %d msec), exiting.\n",k);
-                runTest = false;
-                }
-            else{
-                iotDev->ButtonPress = 1;
-                tilt_detection_enabled = !tilt_detection_enabled;
-#if MBED_CONF_APP_IKSVERSION == 2
-                if( !tilt_detection_enabled ) {
-                    acc_gyro->disable_tilt_detection();
-                    iotDev->Tilt &= 1;
-                    }
-                else{
-                    acc_gyro->enable_tilt_detection();
-                    iotDev->Tilt |= 2;
-                    }
-#endif
-                }
-            }
 
         printf("(%04d)",msg_sent++);
         msg = makeMessage(iotDev);
         msgSize = strlen(msg);
         sendMessage(iotHubClientHandle, msg, msgSize);
         free(msg);
-        SET_LED(BLUE,LED_OFF);
-        iotDev->Tilt &= 0x2;
-        iotDev->ButtonPress = 0;
 
         /* schedule IoTHubClient to send events/receive commands */
         IoTHubClient_LL_DoWork(iotHubClientHandle);
